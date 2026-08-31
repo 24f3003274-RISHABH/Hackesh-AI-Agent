@@ -3,10 +3,12 @@ import { Header } from './components/Header';
 import { ChatView } from './components/ChatView';
 import { GraphVisualizer } from './components/GraphVisualizer';
 import { ToolSandbox } from './components/ToolSandbox';
+import { MemoryExplorer } from './components/MemoryExplorer';
+import { RAGExplorer } from './components/RAGExplorer';
 import { ChatMessage, AgentStatus, RouteType } from './types';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'chat' | 'sandbox' | 'graph'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'sandbox' | 'graph' | 'memory' | 'rag'>('chat');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>({ status: 'idle' });
   const [activeRoute, setActiveRoute] = useState<RouteType | undefined>(undefined);
@@ -58,6 +60,8 @@ export default function App() {
         route: data.route,
         toolCalls: data.toolCalls,
         traces: data.traces,
+        citations: data.citations,
+        newMemory: data.newMemory,
         media: data.media,
       };
 
@@ -151,6 +155,18 @@ export default function App() {
         {activeTab === 'sandbox' && (
           <div className="max-w-4xl mx-auto">
             <ToolSandbox />
+          </div>
+        )}
+
+        {activeTab === 'memory' && (
+          <div className="max-w-4xl mx-auto">
+            <MemoryExplorer />
+          </div>
+        )}
+
+        {activeTab === 'rag' && (
+          <div className="max-w-4xl mx-auto">
+            <RAGExplorer />
           </div>
         )}
       </main>

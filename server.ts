@@ -4,6 +4,9 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
+import { globalMemoryEngine, MemoryCategory } from './src/memory/memoryEngine';
+import { globalRAGEngine } from './src/rag/ragEngine';
+import { IntegratedContextOrchestrator } from './src/contextOrchestrator';
 
 dotenv.config();
 
@@ -12,6 +15,19 @@ const PORT = 3000;
 
 app.use(cors());
 app.use(express.json());
+
+// Initialize Integrated Context Orchestrator
+const globalOrchestrator = new IntegratedContextOrchestrator(
+  globalMemoryEngine,
+  globalRAGEngine,
+  {
+    maxContextChars: 3500,
+    maxMemories: 4,
+    maxRagChunks: 3,
+    minMemoryImportance: 3,
+    minRagSimilarity: 0.18,
+  }
+);
 
 // Lazy-initialized Gemini client with required User-Agent
 let aiClient: GoogleGenAI | null = null;
@@ -330,6 +346,97 @@ app.get('/api/agent/emails', (req, res) => {
   res.json({ emails: dispatchedEmails });
 });
 
+// ==========================================
+// MEMORY ENGINE API ENDPOINTS
+// ==========================================
+
+app.get('/api/memory/sessions', (req, res) => {
+  const sessions = globalMemoryEngine.getSessions();
+  res.json({ sessions });
+});
+
+app.get('/api/memory/messages', (req, res) => {
+  const { sessionId, query } = req.query;
+  if (sessionId) {
+    const messages = globalMemoryEngine.getRecentMessages(String(sessionId));
+    return res.json({ messages });
+  }
+  const searchRes = globalMemoryEngine.searchMessages(String(query || ''));
+  res.json({ messages: searchRes });
+});
+
+app.get('/api/memory/items', (req, res) => {
+  const { query, category, minImportance } = req.query;
+  const memories = globalMemoryEngine.searchMemories(
+    query ? String(query) : undefined,
+    category ? (String(category) as MemoryCategory) : undefined,
+    minImportance ? Number(minImportance) : 1
+  );
+  res.json({ memories });
+});
+
+app.post('/api/memory/items', (req, res) => {
+  const { content, category, importance, source } = req.body;
+  if (!content) {
+    return res.status(400).json({ error: 'Memory content is required' });
+  }
+  const mem = globalMemoryEngine.saveMemory(
+    content,
+    category || 'fact',
+    importance || 5,
+    source || 'user_manual_entry'
+  );
+  res.json({ success: true, memory: mem });
+});
+
+app.delete('/api/memory/items/:id', (req, res) => {
+  const success = globalMemoryEngine.deleteMemory(req.params.id);
+  res.json({ success });
+});
+
+// ==========================================
+// LOCAL RAG ENGINE API ENDPOINTS
+// ==========================================
+
+app.get('/api/rag/documents', (req, res) => {
+  const documents = globalRAGEngine.getDocuments();
+  const chunks = globalRAGEngine.getChunks();
+  res.json({ documents, totalChunks: chunks.length });
+});
+
+app.post('/api/rag/documents', (req, res) => {
+  const { filename, content, docType, totalPages } = req.body;
+  if (!filename || !content) {
+    return res.status(400).json({ error: 'Filename and content are required' });
+  }
+  const doc = globalRAGEngine.ingestDocument(
+    filename,
+    content,
+    docType || 'txt',
+    totalPages || 1
+  );
+  res.json({ success: true, document: doc });
+});
+
+app.delete('/api/rag/documents/:id', (req, res) => {
+  const success = globalRAGEngine.deleteDocument(req.params.id);
+  res.json({ success });
+});
+
+app.post('/api/rag/rebuild', (req, res) => {
+  globalRAGEngine.rebuildIndex();
+  res.json({ success: true, message: 'Local vector store re-indexed successfully' });
+});
+
+app.post('/api/rag/query', (req, res) => {
+  const { query, topK } = req.body;
+  if (!query) {
+    return res.status(400).json({ error: 'Query parameter is required' });
+  }
+  const ragContext = globalRAGEngine.query(query, topK ? Number(topK) : 3);
+  res.json(ragContext);
+});
+
 // Direct Tool: Calculator
 app.post('/api/tools/calculator', (req, res) => {
   const { expression } = req.body;
@@ -364,19 +471,66 @@ app.post('/api/tools/gmail', (req, res) => {
   });
 });
 
-// Core Agent Chat Endpoint (LangGraph style Multi-node Agent)
+// Core Agent Chat Endpoint (LangGraph style Multi-node Agent with Memory & RAG Integration)
 app.post('/api/agent/chat', async (req, res) => {
-  const { message, history } = req.body;
+  const { message, history, sessionId } = req.body;
   const startTime = Date.now();
 
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'Message string is required' });
   }
 
+  // Ensure active session in Memory Engine
+  const activeSessionId = sessionId || globalMemoryEngine.getSessions()[0]?.id || globalMemoryEngine.createSession('General Conversation').id;
+
+  // Step 7a: Persist user message to local SQLite/JSON memory
+  globalMemoryEngine.saveMessage(activeSessionId, 'user', message);
+
   const traces: any[] = [];
   let toolCalls: any[] = [];
   let mediaData: any = null;
   let finalContent = '';
+  let citations: string[] = [];
+  let savedNewMemory: any = null;
+
+  // Step 1 - 5: Execute Integrated Context Engine
+  // (History Relevance + Categorized Long-term Memory Search + Local RAG Document Search + Ranking & Budget limits)
+  const contextPackage = globalOrchestrator.buildContextPackage(message, activeSessionId);
+
+  // Trace: Memory Retrieval
+  if (contextPackage.memoryItems.length > 0) {
+    traces.push({
+      step: 'memory_retrieval',
+      title: 'Local Memory Engine Query',
+      description: `Retrieved ${contextPackage.memoryItems.length} relevant long-term memories (${contextPackage.memoryItems.map((m) => m.category).join(', ')})`,
+      timestamp: new Date().toISOString(),
+      data: {
+        memoriesCount: contextPackage.memoryItems.length,
+        memories: contextPackage.memoryItems.map((m) => ({
+          category: m.category,
+          importance: m.importance,
+          content: m.content.length > 60 ? m.content.slice(0, 60) + '...' : m.content,
+        })),
+      },
+    });
+  }
+
+  // Trace: RAG Retrieval
+  if (contextPackage.ragMatches.length > 0) {
+    traces.push({
+      step: 'rag_retrieval',
+      title: 'Local Vector RAG Query',
+      description: `Retrieved ${contextPackage.ragMatches.length} semantic chunks from local documents`,
+      timestamp: new Date().toISOString(),
+      data: {
+        matchesCount: contextPackage.ragMatches.length,
+        citations: contextPackage.citations,
+        topScore: (contextPackage.ragMatches[0].score * 100).toFixed(0) + '%',
+      },
+    });
+  }
+
+  citations = contextPackage.citations;
 
   // 1. Router Node
   const detectedRoute = detectRoute(message);
@@ -564,24 +718,32 @@ Return a JSON object with:
         finalContent = `Email successfully dispatched to ${recipient}. Subject: "${subject}".`;
       }
     } else {
-      // General node
+      // General node with Grounded Context & Memory Augmentation
       if (ai) {
-        // Construct conversation contents
+        // Construct conversation contents with strict context injection
         const contentsPayload: any[] = [];
 
-        // If history provided, add recent turns
-        if (Array.isArray(history) && history.length > 0) {
-          for (const msg of history.slice(-6)) {
-            contentsPayload.push({
-              role: msg.role === 'assistant' ? 'model' : 'user',
-              parts: [{ text: msg.content }],
-            });
-          }
+        // If history provided or retrieved, add only relevant recent turns
+        const effectiveHistory = contextPackage.recentMessages.length > 0 
+          ? contextPackage.recentMessages 
+          : (Array.isArray(history) ? history.slice(-4) : []);
+
+        for (const msg of effectiveHistory) {
+          contentsPayload.push({
+            role: msg.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: msg.content }],
+          });
+        }
+
+        // Build User Prompt with grounded context if available
+        let userPromptWithContext = message;
+        if (contextPackage.formattedContextBlock) {
+          userPromptWithContext = `[LOCAL CONTEXT & MEMORIES]\n${contextPackage.formattedContextBlock}\n\n[USER QUERY]\n${message}\n\nPlease answer the question accurately using the provided local context and memories when relevant. If citing documents or memories, reference their names accurately.`;
         }
 
         contentsPayload.push({
           role: 'user',
-          parts: [{ text: message }],
+          parts: [{ text: userPromptWithContext }],
         });
 
         const generated = await generateWithFallback(ai, {
@@ -592,20 +754,60 @@ Return a JSON object with:
         if (generated) {
           finalContent = generated;
         } else {
-          // Fallback knowledge base for common queries when model is at capacity
-          const lower = message.toLowerCase();
-          if (lower.includes('python')) {
-            finalContent = 'Python is a high-level, interpreted programming language known for its readability and versatile ecosystem. It is widely used in data science, artificial intelligence, web development, automation, and backend systems.';
-          } else if (lower.includes('capital of india')) {
-            finalContent = 'The capital of India is New Delhi.';
-          } else if (lower.includes('who are you') || lower.includes('what are you') || lower.includes('hello') || lower.includes('hi')) {
-            finalContent = 'Hello! I am Hackesh, your personal AI agent. I can perform math calculations, search and play YouTube videos, compose and dispatch emails, and answer general questions.';
+          // Fallback grounded answer if Gemini offline or capacity limited
+          if (contextPackage.memoryItems.length > 0 || contextPackage.ragMatches.length > 0) {
+            const memorySummaries = contextPackage.memoryItems.map((m) => m.content).join('; ');
+            const ragSummaries = contextPackage.ragMatches.map((r) => r.chunk.text).join(' ');
+            finalContent = `Based on your local memories and documents:\n\n${memorySummaries || ''} ${ragSummaries || ''}`.trim();
           } else {
-            finalContent = `I processed your request: "${message}". All tools (Calculator, YouTube, Gmail) are fully active and available!`;
+            const lower = message.toLowerCase();
+            if (lower.includes('python')) {
+              finalContent = 'Python is a high-level, interpreted programming language known for its readability and versatile ecosystem.';
+            } else if (lower.includes('capital of india')) {
+              finalContent = 'The capital of India is New Delhi.';
+            } else if (lower.includes('who are you') || lower.includes('hello') || lower.includes('hi')) {
+              finalContent = 'Hello! I am Hackesh, your local-first personal AI agent with integrated memory and RAG capabilities.';
+            } else {
+              finalContent = `I processed your request: "${message}". All tools, memory search, and RAG document retrieval are operational!`;
+            }
           }
         }
       } else {
-        finalContent = `Hello! I am Hackesh, your personal AI agent. I can help you with arithmetic calculations, YouTube searching & music playback, drafting & dispatching emails, and answering general knowledge or technical questions.`;
+        if (contextPackage.memoryItems.length > 0 || contextPackage.ragMatches.length > 0) {
+          const summaries = [
+            ...contextPackage.memoryItems.map((m) => `• [Memory] ${m.content}`),
+            ...contextPackage.ragMatches.map((r) => `• [Document: ${r.chunk.sourceFilename}] ${r.chunk.text}`),
+          ].join('\n');
+          finalContent = `Here is what I found from your local memories and documents:\n\n${summaries}`;
+        } else {
+          finalContent = `Hello! I am Hackesh, your local-first personal AI agent. I can access your local memory bank, search documents via RAG, solve calculations, play videos, and compose emails.`;
+        }
+      }
+    }
+
+    // Step 7b: Save assistant response to conversation history
+    globalMemoryEngine.saveMessage(activeSessionId, 'assistant', finalContent);
+
+    // Step 8: Check if a new long-term memory should be formed
+    if (contextPackage.newMemoryCandidate) {
+      const { content, category, importance } = contextPackage.newMemoryCandidate;
+      // Ensure not duplicated
+      const existing = globalMemoryEngine.searchMemories(content, category);
+      if (existing.length === 0) {
+        const saved = globalMemoryEngine.saveMemory(
+          content,
+          category,
+          importance,
+          'conversation_auto_heuristic'
+        );
+        savedNewMemory = saved;
+        traces.push({
+          step: 'memory_formation',
+          title: 'New Long-Term Memory Created',
+          description: `Automatically created ${category.toUpperCase()} memory: "${content}"`,
+          timestamp: new Date().toISOString(),
+          data: saved,
+        });
       }
     }
 
@@ -622,7 +824,9 @@ Return a JSON object with:
       route: detectedRoute,
       toolCalls,
       traces,
+      citations,
       media: mediaData,
+      newMemory: savedNewMemory,
       latencyMs: Date.now() - startTime,
     });
   } catch (err: any) {
@@ -634,6 +838,7 @@ Return a JSON object with:
       route: detectedRoute,
       traces,
       toolCalls,
+      citations,
       media: mediaData,
       latencyMs: Date.now() - startTime,
     });

@@ -1,13 +1,13 @@
 import React from 'react';
-import { Bot, Sparkles, Cpu, Play, RotateCcw, Activity } from 'lucide-react';
+import { Bot, Sparkles, Cpu, Play, RotateCcw, Activity, Brain, Layers } from 'lucide-react';
 import { AgentStatus, RouteType } from '../types';
 
 interface HeaderProps {
   status: AgentStatus;
   onClearChat: () => void;
   onRunTest: (query: string) => void;
-  activeTab: 'chat' | 'sandbox' | 'graph';
-  setActiveTab: (tab: 'chat' | 'sandbox' | 'graph') => void;
+  activeTab: 'chat' | 'sandbox' | 'graph' | 'memory' | 'rag';
+  setActiveTab: (tab: 'chat' | 'sandbox' | 'graph' | 'memory' | 'rag') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -20,8 +20,9 @@ export const Header: React.FC<HeaderProps> = ({
   const testQueries = [
     { label: '🔢 25 * 48', query: 'Calculate 25 * 48' },
     { label: '🎵 Play Kesariya', query: 'Play Kesariya' },
-    { label: '🐍 What is Python?', query: 'What is Python?' },
-    { label: '🏛️ Capital of India', query: 'What is the capital of India?' },
+    { label: '☀️ Weather Tokyo', query: 'What is the weather in Tokyo?' },
+    { label: '📰 Tech News', query: 'Show me the latest tech news' },
+    { label: '🧠 Query RAG', query: 'How does Hackesh store memories?' },
     { label: '✉️ Send Email', query: 'Send an email to john@example.com about Project Milestone' },
   ];
 
@@ -98,6 +99,28 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Cpu className="w-3.5 h-3.5" /> Tool Sandbox
+            </button>
+            <button
+              id="tab-memory"
+              onClick={() => setActiveTab('memory')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+                activeTab === 'memory'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Brain className="w-3.5 h-3.5" /> Memory
+            </button>
+            <button
+              id="tab-rag"
+              onClick={() => setActiveTab('rag')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+                activeTab === 'rag'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" /> Local RAG
             </button>
           </div>
 

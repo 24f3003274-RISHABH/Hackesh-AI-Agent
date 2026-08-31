@@ -16,7 +16,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
 }) => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef不易 = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -26,7 +26,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     scrollToBottom();
   }, [messages, status]);
 
-  const handleSubmit不易 = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || status.status !== 'idle') return;
     onSendMessage(input);
@@ -34,10 +34,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
   };
 
   const samplePrompts = [
+    'What did my professor teach last week?',
+    'Remember that I prefer dark mode in all applications',
     'Calculate 25 * 48',
     'Play Kesariya on YouTube',
-    'What is Python and why is it popular?',
-    'What is the capital of India?',
     'Send an email to team@example.com about Q3 goals',
   ];
 
@@ -97,14 +97,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
       {/* Input Form */}
       <div className="p-3 md:p-4 bg-slate-950 border-t border-slate-800">
-        <form onSubmit={handleSubmit不易} className="flex items-center gap-2">
+        <form onSubmit={handleSubmit} className="flex items-center gap-2">
           <input
-            ref={inputRef不易}
+            ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             disabled={status.status !== 'idle'}
-            placeholder="Ask Hackesh (e.g. 'Calculate 25 * 48', 'Play Kesariya', 'What is Python?')..."
+            placeholder="Ask Hackesh (e.g. 'What did my professor teach?', 'Remember that...', 'Calculate 25 * 48')..."
             className="flex-1 px-4 py-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:outline-none focus:border-blue-500 transition-colors disabled:opacity-60"
           />
           <button

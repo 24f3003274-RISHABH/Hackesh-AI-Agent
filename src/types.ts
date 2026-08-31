@@ -9,7 +9,7 @@ export interface ToolCallTrace {
 }
 
 export interface AgentStepTrace {
-  step: 'router' | 'tool_execution' | 'synthesizer';
+  step: 'router' | 'tool_execution' | 'synthesizer' | 'memory_retrieval' | 'rag_retrieval' | 'memory_formation';
   title: string;
   description: string;
   timestamp: string;
@@ -24,6 +24,8 @@ export interface ChatMessage {
   route?: RouteType;
   toolCalls?: ToolCallTrace[];
   traces?: AgentStepTrace[];
+  citations?: string[];
+  newMemory?: any;
   media?: {
     type: 'youtube' | 'calc_result' | 'email_receipt';
     data: any;

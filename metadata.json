@@ -1,6 +1,6 @@
 {
   "name": "Hackesh AI Agent",
-  "description": "A smart personal AI agent featuring intelligent reasoning, mathematical calculation, YouTube video searching & playback, and email workflows powered by Google Gemini.",
+  "description": "Local-first personal AI assistant integrating persistent SQLite Memory Engine, local vector RAG Engine, YouTube search, calculator, and email dispatch with grounded context ranking.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
