@@ -1,0 +1,6 @@
+{
+  "name": "Hackesh AI Agent",
+  "description": "A smart personal AI agent featuring intelligent reasoning, mathematical calculation, YouTube video searching & playback, and email workflows powered by Google Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
