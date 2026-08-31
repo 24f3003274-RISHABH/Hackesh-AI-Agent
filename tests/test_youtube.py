@@ -2,12 +2,16 @@ from tools.youtube import youtube_search
 
 
 def main():
+
+    print("Testing Hackesh YouTube Tool...\n")
+
     result = youtube_search.invoke(
         {
-            "query": "Arijit Singh Tum Hi Ho"
+            "query": "Kesariya Arijit Singh"
         }
     )
 
+    print("\nRESULT:")
     print(result)
 
 

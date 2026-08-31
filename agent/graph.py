@@ -1,4 +1,13 @@
+# ============================================================
+# HACKESH AI AGENT
+# ============================================================
 
+from langchain_ollama import ChatOllama
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import StateGraph, START, END, MessagesState
+
+from tools.calculator import calculator
+from tools.youtube import youtube_search
 from typing import Annotated
 from typing_extensions import TypedDict
 
@@ -9,100 +18,160 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
-from tools.calculator import calculator
-from tools.youtube import youtube_search
-
 # ============================================================
-# Hackesh State
-# ============================================================
-
-class HackeshState(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages]
-
-
-# ============================================================
-# Hackesh System Prompt
-# ============================================================
-
-SYSTEM_PROMPT = SYSTEM_PROMPT = """
-You are Hackesh, a fast and practical personal AI assistant.
-
-Your job is to help the user complete tasks and answer questions.
-
-IMPORTANT RULES:
-
-1. Be concise and direct.
-2. Do not reveal your internal reasoning.
-3. Do not pretend that you performed an action if you did not.
-4. Use tools when a tool is appropriate.
-5. For calculations, use the calculator tool.
-6. For YouTube/music requests, use the youtube_search tool.
-7. If the user asks to play a song, search YouTube for that song.
-8. If the user asks to search for a video on YouTube, use the YouTube tool.
-9. After a tool returns a result, briefly tell the user what happened.
-10. Do not give unnecessary explanations.
-
-You are Hackesh, the user's personal AI assistant.
-"""
-# ============================================================
-# LLM 
+# 1. LLM
 # ============================================================
 
 llm = ChatOllama(
-    model="llama3.1",
-
-    # Deterministic responses are better for an agent.
+    model="llama3.1:latest",
     temperature=0,
-
-    # Keep Qwen loaded in memory.
-    # This avoids repeatedly loading the model.
     keep_alive="30m",
-
-    # Conservative generation.
     top_p=0.8,
     top_k=20,
 )
 
 
 # ============================================================
-# Tools
+# 2. TOOL-ENABLED LLM
 # ============================================================
 
-tools = [
-    calculator,
-    youtube_search,
-]
-
-llm_with_tools = llm.bind_tools(tools)
+llm_with_tools = llm.bind_tools(
+    [calculator]
+)
 
 
 # ============================================================
-# Agent Node
+# 3. SYSTEM PROMPTS
 # ============================================================
 
-def agent_node(state: HackeshState):
+GENERAL_SYSTEM_PROMPT = """
+You are Hackesh, a personal AI assistant.
 
-    messages = state["messages"]
+Answer the user's question directly and naturally.
 
-    # Add system prompt only for the current model call.
-    model_messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        *messages,
+You can answer questions about:
+- general knowledge
+- programming
+- technology
+- science
+- history
+- mathematics
+- everyday topics
+
+Do not refuse normal questions.
+
+Do not mention internal tools.
+
+Be concise but helpful.
+"""
+
+
+CALCULATOR_SYSTEM_PROMPT = """
+You are Hackesh, a personal AI assistant.
+
+The user has requested a mathematical calculation.
+
+Use the calculator tool to perform the calculation.
+
+After receiving the calculator result, provide the final answer concisely.
+"""
+
+
+# ============================================================
+# 4. ROUTER LOGIC
+# ============================================================
+
+def route_request(user_message: str) -> str:
+
+    text = user_message.lower().strip()
+
+    # ========================================================
+    # YOUTUBE
+    # ========================================================
+
+    youtube_keywords = [
+        "play",
+        "play song",
+        "play music",
+        "listen to",
+        "youtube",
+        "watch",
+        "open youtube",
     ]
 
-    response = llm_with_tools.invoke(model_messages)
+    if any(
+        keyword in text
+        for keyword in youtube_keywords
+    ):
+        return "youtube"
 
-    # Show when Hackesh decides to use a tool.
-    if getattr(response, "tool_calls", None):
 
-        print("\n[Hackesh → Tool]")
+    # ========================================================
+    # CALCULATOR
+    # ========================================================
 
-        for tool_call in response.tool_calls:
-            print(
-                f"  {tool_call['name']}("
-                f"{tool_call['args']}"
-                f")"
-            )
+    calculation_keywords = [
+        "calculate",
+        "calculation",
+        "compute",
+        "multiply",
+        "divide",
+        "addition",
+        "subtraction",
+        "sum",
+        "product",
+    ]
+
+    if any(
+        keyword in text
+        for keyword in calculation_keywords
+    ):
+        return "calculator"
+
+
+    # ========================================================
+    # GENERAL
+    # ========================================================
+
+    return "general"
+# ============================================================
+# 5. ROUTER NODE
+# ============================================================
+
+def router_node(state: MessagesState):
+
+    # MessagesState contains LangChain message objects.
+    last_message = state["messages"][-1]
+
+    user_message = last_message.content
+
+    route = route_request(user_message)
+
+    print(
+        f"\n[Hackesh Router] → {route}"
+    )
+
+    return {}
+
+
+# ============================================================
+# 6. GENERAL NODE
+# ============================================================
+
+def general_node(state: MessagesState):
+
+    user_message = state["messages"][-1].content
+
+    response = llm.invoke(
+        [
+            SystemMessage(
+                content=GENERAL_SYSTEM_PROMPT
+            ),
+            HumanMessage(
+                content=user_message
+            ),
+        ]
+    )
 
     return {
         "messages": [response]
@@ -110,26 +179,213 @@ def agent_node(state: HackeshState):
 
 
 # ============================================================
-# Tool Node
+# 7. CALCULATOR NODE
 # ============================================================
 
-tool_node = ToolNode(tools)
+def calculator_node(state: MessagesState):
+
+    user_message = state["messages"][-1].content
+
+    response = llm_with_tools.invoke(
+        [
+            SystemMessage(
+                content=CALCULATOR_SYSTEM_PROMPT
+            ),
+            HumanMessage(
+                content=user_message
+            ),
+        ]
+    )
+
+    # --------------------------------------------------------
+    # Check whether the model requested a tool
+    # --------------------------------------------------------
+
+    if response.tool_calls:
+
+        tool_call = response.tool_calls[0]
+
+        if tool_call["name"] == "calculator":
+
+            expression = tool_call["args"]["expression"]
+
+            print(
+                f"[Hackesh Tool] calculator → {expression}"
+            )
+
+            result = calculator.invoke(
+                {
+                    "expression": expression
+                }
+            )
+
+            # ------------------------------------------------
+            # Generate final natural-language response
+            # ------------------------------------------------
+
+            final_response = llm.invoke(
+                [
+                    SystemMessage(
+                        content=GENERAL_SYSTEM_PROMPT
+                    ),
+                    HumanMessage(
+                        content=(
+                            f"The user asked: {user_message}\n\n"
+                            f"The calculator returned: {result}\n\n"
+                            "Give the final answer to the user."
+                        )
+                    ),
+                ]
+            )
+
+            return {
+                "messages": [final_response]
+            }
+
+    # --------------------------------------------------------
+    # Fallback
+    # --------------------------------------------------------
+
+    return {
+        "messages": [response]
+    }
+
+
+def youtube_node(state: MessagesState):
+
+    user_message = state["messages"][-1].content
+
+    query = user_message
+
+    # Remove common command words
+    prefixes = [
+        "play ",
+        "listen to ",
+        "watch ",
+        "open youtube and play ",
+        "play song ",
+        "play music ",
+    ]
+
+    for prefix in prefixes:
+
+        if query.lower().startswith(prefix):
+            query = query[len(prefix):].strip()
+            break
+
+    print(
+        f"[Hackesh YouTube] Searching → {query}"
+    )
+
+    result = youtube_search.invoke(
+        {
+            "query": query
+        }
+    )
+
+    final_response = llm.invoke(
+        [
+            SystemMessage(
+                content="""
+You are Hackesh, a personal AI assistant.
+
+The requested YouTube content has been opened in the browser.
+
+Respond briefly and naturally.
+
+For example:
+"Sure, playing Kesariya."
+
+Do not mention internal tools or APIs.
+"""
+            ),
+            HumanMessage(
+                content=result
+            ),
+        ]
+    )
+
+    return {
+        "messages": [final_response]
+    }
+# ============================================================
+# 8. CONDITIONAL ROUTING
+# ============================================================
+
+def decide_route(state: MessagesState):
+
+    user_message = state["messages"][-1].content
+
+    return route_request(user_message)
 
 
 # ============================================================
-# Routing
+# 9. BUILD GRAPH
 # ============================================================
 
-def should_continue(state: HackeshState):
-
-    last_message = state["messages"][-1]
-
-    if getattr(last_message, "tool_calls", None):
-        return "tools"
-
-    return END
+graph = StateGraph(MessagesState)
 
 
+# Nodes
+graph.add_node(
+    "router",
+    router_node
+)
+
+graph.add_node(
+    "general",
+    general_node
+)
+
+graph.add_node(
+    "calculator",
+    calculator_node
+)
+graph.add_node(
+    "youtube",
+    youtube_node
+)
+
+# ============================================================
+# 10. EDGES
+# ============================================================
+
+graph.add_edge(
+    START,
+    "router"
+)
+
+
+graph.add_conditional_edges(
+    "router",
+    decide_route,
+    {
+        "general": "general",
+        "calculator": "calculator",
+        "youtube": "youtube",
+    }
+)
+
+
+graph.add_edge(
+    "general",
+    END
+)
+
+graph.add_edge(
+    "calculator",
+    END
+)
+
+graph.add_edge(
+    "youtube",
+    END
+)
+
+
+# ============================================================
+# 11. COMPILE HACKESH
+# ============================================================
 # ============================================================
 # Build Graph
 # ============================================================
@@ -139,7 +395,6 @@ def build_graph():
     graph = StateGraph(HackeshState)
 
     graph.add_node("agent", agent_node)
-
     graph.add_node("tools", tool_node)
 
     graph.add_edge(
@@ -162,3 +417,10 @@ def build_graph():
     )
 
     return graph.compile()
+
+
+hackesh = graph.compile()
+
+
+
+print("Hackesh graph loaded successfully.")
